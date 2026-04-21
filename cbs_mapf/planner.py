@@ -115,6 +115,11 @@ class Planner:
             if agent.agent_id in best.agent_start_times:
                 agent.start_time = best.agent_start_times[agent.agent_id]
         
+        # Also restore self.agents (they're also pickled)
+        for agent in self.agents:
+            if agent.agent_id in best.agent_start_times:
+                agent.start_time = best.agent_start_times[agent.agent_id]
+        
         agent_i, agent_j, time_of_conflict = self.validate_paths(self.agents, best)
 
         # If there is not conflict, validate_paths returns (None, None, -1)
