@@ -257,12 +257,20 @@ class Planner:
                 padded = np.array([agent.start] * max_end_time)
             else:
                 # Prepend: start position for times before agent.start_time
-                prepend = [agent.start] * agent.start_time
+                if agent.start_time > 0:
+                    prepend = np.array([agent.start] * agent.start_time)
+                else:
+                    prepend = np.empty((0, 2))
+                
                 # Append: goal position for times after path ends
                 append_count = max_end_time - agent.start_time - len(path)
-                append = [path[-1]] * append_count
+                if append_count > 0:
+                    append = np.array([path[-1]] * append_count)
+                else:
+                    append = np.empty((0, 2))
+                
                 # Concatenate all pieces
-                padded = np.concatenate([np.array(prepend), path, np.array(append)])
+                padded = np.concatenate([prepend, path, append])
             padded_solution[agent] = padded
         
         return padded_solution
