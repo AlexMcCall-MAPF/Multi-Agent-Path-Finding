@@ -120,6 +120,10 @@ class Planner:
             if agent.agent_id in best.agent_start_times:
                 agent.start_time = best.agent_start_times[agent.agent_id]
         
+        # DEBUG: Check if restoration worked
+        if self.debug:
+            print(f'[search_node] Restored start_times: {[(a.agent_id, a.start_time) for a in self.agents[:3]]}')
+        
         agent_i, agent_j, time_of_conflict = self.validate_paths(self.agents, best)
 
         # If there is not conflict, validate_paths returns (None, None, -1)
