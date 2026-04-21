@@ -110,6 +110,10 @@ class Planner:
     The parameters open and results MUST BE of type ListProxy to ensure synchronization.
     '''
     def search_node(self, best: CTNode, results):
+        # DEBUG: Show what's in the mapping before restoration
+        if self.debug:
+            print(f'[search_node] agent_start_times mapping: {best.agent_start_times}')
+        
         # Restore agent start_times from CTNode mapping (they may be lost during pickling)
         for agent in best.solution.keys():
             if agent.agent_id in best.agent_start_times:
