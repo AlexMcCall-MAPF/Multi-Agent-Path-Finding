@@ -115,6 +115,11 @@ class Planner:
         if agent_i is None:
             results.append((self.reformat(self.agents, best.solution),))
             return
+        
+        # Debug: Print conflict information
+        if self.debug:
+            print(f'CBS: Conflict detected between Agent {agent_i.agent_id} and Agent {agent_j.agent_id} at time {time_of_conflict}')
+        
         # Calculate new constraints
         agent_i_constraint = self.calculate_constraints(best, agent_i, agent_j, time_of_conflict)
         agent_j_constraint = self.calculate_constraints(best, agent_j, agent_i, time_of_conflict)
@@ -126,6 +131,13 @@ class Planner:
         agent_j_path = self.calculate_path(agent_j,
                                            agent_j_constraint,
                                            self.calculate_goal_times(best, agent_j, self.agents))
+
+        # Debug: Print which agents failed to find paths
+        if self.debug:
+            if len(agent_i_path) == 0:
+                print(f'CBS: Agent {agent_i.agent_id} failed to find constrained path')
+            if len(agent_j_path) == 0:
+                print(f'CBS: Agent {agent_j.agent_id} failed to find constrained path')
 
         # Replace old paths with new ones in solution
         solution_i = best.solution
@@ -220,13 +232,9 @@ class Planner:
     def calculate_path(self, agent: Agent, 
                        constraints: Constraints, 
                        goal_times: Dict[int, Set[Tuple[int, int]]]) -> np.ndarray:
-        # Get constraints for this agent, filtering out times before agent starts
-        agent_constraints = constraints.setdefault(agent, dict())
-        filtered_constraints = {t: positions for t, positions in agent_constraints.items() 
-                                if t >= agent.start_time}
         return self.st_planner.plan(agent.start, 
                                     agent.goal, 
-                                    filtered_constraints,
+                                    constraints.setdefault(agent, dict()), 
                                     semi_dynamic_obstacles=goal_times,
                                     start_time=agent.start_time,
                                     max_iter=self.low_level_max_iter, 
