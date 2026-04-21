@@ -59,10 +59,7 @@ class Planner:
         # Apply start times to agents
         for agent, start_time in zip(self.agents, start_times):
             agent.start_time = start_time
-        
-        # DEBUG: Verify start_times were set
-        if debug:
-            print(f'[plan] After setting start_times: {[(a.agent_id, a.start_time) for a in self.agents[:3]]}')
+
 
         constraints = Constraints()
 
@@ -71,17 +68,8 @@ class Planner:
 
         open = []
         if all(len(path) != 0 for path in solution.values()):
-            # DEBUG: Check start_times right before creating mapping
-            if debug:
-                print(f'[plan] Before creating mapping: {[(a.agent_id, a.start_time) for a in self.agents[:3]]}')
-            
             # Make root node with agent start_times mapping
             agent_start_times = {agent.agent_id: agent.start_time for agent in self.agents}
-            
-            # DEBUG: Verify mapping was created correctly
-            if debug:
-                print(f'[plan] Mapping created: {dict(list(agent_start_times.items())[:3])}')
-            
             node = CTNode(constraints, solution, agent_start_times)
             # Min heap for quick extraction
             open.append(node)
@@ -123,10 +111,6 @@ class Planner:
     The parameters open and results MUST BE of type ListProxy to ensure synchronization.
     '''
     def search_node(self, best: CTNode, results):
-        # DEBUG: Show what's in the mapping before restoration
-        if self.debug:
-            print(f'[search_node] agent_start_times mapping: {best.agent_start_times}')
-        
         # Restore agent start_times from CTNode mapping (they may be lost during pickling)
         for agent in best.solution.keys():
             if agent.agent_id in best.agent_start_times:
@@ -136,10 +120,6 @@ class Planner:
         for agent in self.agents:
             if agent.agent_id in best.agent_start_times:
                 agent.start_time = best.agent_start_times[agent.agent_id]
-        
-        # DEBUG: Check if restoration worked
-        if self.debug:
-            print(f'[search_node] Restored start_times: {[(a.agent_id, a.start_time) for a in self.agents[:3]]}')
         
         agent_i, agent_j, time_of_conflict = self.validate_paths(self.agents, best)
 
@@ -211,10 +191,6 @@ class Planner:
         end_i = start_i + len(solution[agent_i])
         end_j = start_j + len(solution[agent_j])
         
-        # Debug output
-        if self.debug:
-            print(f'  safe_distance: Agent {agent_i.agent_id} (start={start_i}, path_len={len(solution[agent_i])}, end={end_i}) vs Agent {agent_j.agent_id} (start={start_j}, path_len={len(solution[agent_j])}, end={end_j})')
-        
         # Check all absolute times where both agents exist
         for abs_time in range(max(start_i, start_j), min(end_i, end_j)):
             idx_i = abs_time - start_i
@@ -272,13 +248,21 @@ class Planner:
     def calculate_path(self, agent: Agent, 
                        constraints: Constraints, 
                        goal_times: Dict[int, Set[Tuple[int, int]]]) -> np.ndarray:
-        return self.st_planner.plan(agent.start, 
+        if self.debug:
+            print(f'[calculate_path] Agent {agent.agent_id}: start={agent.start}, goal={agent.goal}, start_time={agent.start_time}, constraints={len(constraints.get(agent, {}))}')
+        
+        path = self.st_planner.plan(agent.start, 
                                     agent.goal, 
                                     constraints.setdefault(agent, dict()), 
                                     semi_dynamic_obstacles=goal_times,
                                     start_time=agent.start_time,
                                     max_iter=self.low_level_max_iter, 
                                     debug=self.debug)
+        
+        if len(path) == 0 and self.debug:
+            print(f'[calculate_path] Agent {agent.agent_id} FAILED - no path found!')
+        
+        return path
 
     '''
     Reformat the solution to a numpy array
