@@ -59,6 +59,10 @@ class Planner:
         # Apply start times to agents
         for agent, start_time in zip(self.agents, start_times):
             agent.start_time = start_time
+        
+        # DEBUG: Verify start_times were set
+        if debug:
+            print(f'[plan] After setting start_times: {[(a.agent_id, a.start_time) for a in self.agents[:3]]}')
 
         constraints = Constraints()
 
@@ -67,8 +71,17 @@ class Planner:
 
         open = []
         if all(len(path) != 0 for path in solution.values()):
+            # DEBUG: Check start_times right before creating mapping
+            if debug:
+                print(f'[plan] Before creating mapping: {[(a.agent_id, a.start_time) for a in self.agents[:3]]}')
+            
             # Make root node with agent start_times mapping
             agent_start_times = {agent.agent_id: agent.start_time for agent in self.agents}
+            
+            # DEBUG: Verify mapping was created correctly
+            if debug:
+                print(f'[plan] Mapping created: {dict(list(agent_start_times.items())[:3])}')
+            
             node = CTNode(constraints, solution, agent_start_times)
             # Min heap for quick extraction
             open.append(node)
