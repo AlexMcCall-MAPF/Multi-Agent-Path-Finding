@@ -36,6 +36,7 @@ class Planner:
     '''
     def plan(self, starts: List[Tuple[int, int]],
                    goals: List[Tuple[int, int]],
+                   start_times: List[int] = None,
                    assign:Callable = min_cost,
                    max_iter:int = 200,
                    low_level_max_iter:int = 100,
@@ -45,8 +46,19 @@ class Planner:
         self.low_level_max_iter = low_level_max_iter
         self.debug = debug
 
+        # Handle start_times parameter
+        if start_times is None:
+            start_times = [0] * len(starts)
+        
+        if len(start_times) != len(starts):
+            raise ValueError(f"start_times length ({len(start_times)}) must match starts length ({len(starts)})")
+
         # Do goal assignment
         self.agents = assign(starts, goals)
+        
+        # Apply start times to agents
+        for agent, start_time in zip(self.agents, start_times):
+            agent.start_time = start_time
 
         constraints = Constraints()
 
@@ -139,7 +151,7 @@ class Planner:
         # Check collision pair-wise
         for agent_i, agent_j in combinations(agents, 2):
             time_of_conflict = self.safe_distance(node.solution, agent_i, agent_j)
-            # time_of_conflict=1 if there is not conflict
+            # time_of_conflict=-1 if there is not conflict
             if time_of_conflict == -1:
                 continue
             return agent_i, agent_j, time_of_conflict
@@ -147,10 +159,20 @@ class Planner:
 
 
     def safe_distance(self, solution: Dict[Agent, np.ndarray], agent_i: Agent, agent_j: Agent) -> int:
-        for idx, (point_i, point_j) in enumerate(zip(solution[agent_i], solution[agent_j])):
-            if self.dist(point_i, point_j) > 2*self.robot_radius:
-                continue
-            return idx
+        # Calculate time ranges where both agents are active
+        start_i = agent_i.start_time
+        start_j = agent_j.start_time
+        end_i = start_i + len(solution[agent_i])
+        end_j = start_j + len(solution[agent_j])
+        
+        # Check all absolute times where both agents exist
+        for abs_time in range(max(start_i, start_j), min(end_i, end_j)):
+            idx_i = abs_time - start_i
+            idx_j = abs_time - start_j
+            point_i = solution[agent_i][idx_i]
+            point_j = solution[agent_j][idx_j]
+            if self.dist(point_i, point_j) <= 2*self.robot_radius:
+                return abs_time
         return -1
 
     @staticmethod
@@ -164,11 +186,17 @@ class Planner:
         contrained_path = node.solution[constrained_agent]
         unchanged_path = node.solution[unchanged_agent]
 
-        pivot = unchanged_path[time_of_conflict]
+        # Convert absolute time to path indices
+        idx_conflict_constrained = time_of_conflict - constrained_agent.start_time
+        idx_conflict_unchanged = time_of_conflict - unchanged_agent.start_time
+        
+        pivot = unchanged_path[idx_conflict_unchanged]
         conflict_end_time = time_of_conflict
         try:
-            while self.dist(contrained_path[conflict_end_time], pivot) < 2*self.robot_radius:
+            while idx_conflict_constrained < len(contrained_path) and \
+                  self.dist(contrained_path[idx_conflict_constrained], pivot) < 2*self.robot_radius:
                 conflict_end_time += 1
+                idx_conflict_constrained += 1
         except IndexError:
             pass
         return node.constraints.fork(constrained_agent, tuple(pivot.tolist()), time_of_conflict, conflict_end_time)
@@ -179,8 +207,11 @@ class Planner:
         for other_agent in agents:
             if other_agent == agent:
                 continue
-            time = len(solution[other_agent]) - 1
-            goal_times.setdefault(time, set()).add(tuple(solution[other_agent][time]))
+            if len(solution[other_agent]) == 0:
+                continue
+            relative_time = len(solution[other_agent]) - 1
+            absolute_time = other_agent.start_time + relative_time
+            goal_times.setdefault(absolute_time, set()).add(tuple(solution[other_agent][relative_time]))
         return goal_times
 
     '''
@@ -193,6 +224,7 @@ class Planner:
                                     agent.goal, 
                                     constraints.setdefault(agent, dict()), 
                                     semi_dynamic_obstacles=goal_times,
+                                    start_time=agent.start_time,
                                     max_iter=self.low_level_max_iter, 
                                     debug=self.debug)
 
@@ -201,22 +233,37 @@ class Planner:
     '''
     @staticmethod
     def reformat(agents: List[Agent], solution: Dict[Agent, np.ndarray]):
-        solution = Planner.pad(solution)
+        solution = Planner.pad(solution, agents)
         reformatted_solution = []
         for agent in agents:
             reformatted_solution.append(solution[agent])
         return np.array(reformatted_solution)
 
     '''
-    Pad paths to equal length, inefficient but well..
+    Pad paths to equal length with absolute time indexing, accounting for start times
     '''
     @staticmethod
-    def pad(solution: Dict[Agent, np.ndarray]):
-        max_ = max(len(path) for path in solution.values())
+    def pad(solution: Dict[Agent, np.ndarray], agents: List[Agent]):
+        # Calculate maximum end time across all agents
+        max_end_time = 0
         for agent, path in solution.items():
-            if len(path) == max_:
-                continue
-            padded = np.concatenate([path, np.array(list([path[-1]])*(max_-len(path)))])
-            solution[agent] = padded
-        return solution
+            agent_end_time = agent.start_time + len(path)
+            max_end_time = max(max_end_time, agent_end_time)
+        
+        padded_solution = {}
+        for agent, path in solution.items():
+            if len(path) == 0:
+                # If no path found, use start position throughout
+                padded = np.array([agent.start] * max_end_time)
+            else:
+                # Prepend: start position for times before agent.start_time
+                prepend = [agent.start] * agent.start_time
+                # Append: goal position for times after path ends
+                append_count = max_end_time - agent.start_time - len(path)
+                append = [path[-1]] * append_count
+                # Concatenate all pieces
+                padded = np.concatenate([np.array(prepend), path, np.array(append)])
+            padded_solution[agent] = padded
+        
+        return padded_solution
 
