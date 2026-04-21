@@ -67,8 +67,9 @@ class Planner:
 
         open = []
         if all(len(path) != 0 for path in solution.values()):
-            # Make root node
-            node = CTNode(constraints, solution)
+            # Make root node with agent start_times mapping
+            agent_start_times = {agent.agent_id: agent.start_time for agent in self.agents}
+            node = CTNode(constraints, solution, agent_start_times)
             # Min heap for quick extraction
             open.append(node)
 
@@ -109,19 +110,10 @@ class Planner:
     The parameters open and results MUST BE of type ListProxy to ensure synchronization.
     '''
     def search_node(self, best: CTNode, results):
-        # Restore agent start_times in case they were lost during pickling
-        # Create a map of agent_id -> agent from self.agents
-        agent_map = {agent.agent_id: agent for agent in self.agents}
-        
-        # Update the solution dict to use agents with correct start_times
-        restored_solution = {}
-        for agent, path in best.solution.items():
-            if agent.agent_id in agent_map:
-                restored_agent = agent_map[agent.agent_id]
-                restored_solution[restored_agent] = path
-            else:
-                restored_solution[agent] = path
-        best.solution = restored_solution
+        # Restore agent start_times from CTNode mapping (they may be lost during pickling)
+        for agent in best.solution.keys():
+            if agent.agent_id in best.agent_start_times:
+                agent.start_time = best.agent_start_times[agent.agent_id]
         
         agent_i, agent_j, time_of_conflict = self.validate_paths(self.agents, best)
 
@@ -161,11 +153,13 @@ class Planner:
 
         node_i = None
         if all(len(path) != 0 for path in solution_i.values()):
-            node_i = CTNode(agent_i_constraint, solution_i)
+            # Preserve agent_start_times in new node
+            node_i = CTNode(agent_i_constraint, solution_i, best.agent_start_times)
 
         node_j = None
         if all(len(path) != 0 for path in solution_j.values()):
-            node_j = CTNode(agent_j_constraint, solution_j)
+            # Preserve agent_start_times in new node
+            node_j = CTNode(agent_j_constraint, solution_j, best.agent_start_times)
 
         results.append((node_i, node_j))
 
