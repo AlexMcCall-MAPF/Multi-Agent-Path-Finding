@@ -109,6 +109,20 @@ class Planner:
     The parameters open and results MUST BE of type ListProxy to ensure synchronization.
     '''
     def search_node(self, best: CTNode, results):
+        # Restore agent start_times in case they were lost during pickling
+        # Create a map of agent_id -> agent from self.agents
+        agent_map = {agent.agent_id: agent for agent in self.agents}
+        
+        # Update the solution dict to use agents with correct start_times
+        restored_solution = {}
+        for agent, path in best.solution.items():
+            if agent.agent_id in agent_map:
+                restored_agent = agent_map[agent.agent_id]
+                restored_solution[restored_agent] = path
+            else:
+                restored_solution[agent] = path
+        best.solution = restored_solution
+        
         agent_i, agent_j, time_of_conflict = self.validate_paths(self.agents, best)
 
         # If there is not conflict, validate_paths returns (None, None, -1)
