@@ -249,7 +249,9 @@ class Planner:
                        constraints: Constraints, 
                        goal_times: Dict[int, Set[Tuple[int, int]]]) -> np.ndarray:
         if self.debug:
-            print(f'[calculate_path] Agent {agent.agent_id}: start={agent.start}, goal={agent.goal}, start_time={agent.start_time}, constraints={len(constraints.get(agent, {}))}')
+            agent_constraints = constraints.agent_constraints.get(agent, {})
+            total_constraints = sum(len(obstacles) for obstacles in agent_constraints.values())
+            print(f'[calculate_path] Agent {agent.agent_id}: start={agent.start}, goal={agent.goal}, start_time={agent.start_time}, constraints={total_constraints}')
         
         path = self.st_planner.plan(agent.start, 
                                     agent.goal, 
