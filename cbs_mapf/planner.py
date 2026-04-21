@@ -177,6 +177,10 @@ class Planner:
         end_i = start_i + len(solution[agent_i])
         end_j = start_j + len(solution[agent_j])
         
+        # Debug output
+        if self.debug:
+            print(f'  safe_distance: Agent {agent_i.agent_id} (start={start_i}, path_len={len(solution[agent_i])}, end={end_i}) vs Agent {agent_j.agent_id} (start={start_j}, path_len={len(solution[agent_j])}, end={end_j})')
+        
         # Check all absolute times where both agents exist
         for abs_time in range(max(start_i, start_j), min(end_i, end_j)):
             idx_i = abs_time - start_i
@@ -184,6 +188,8 @@ class Planner:
             point_i = solution[agent_i][idx_i]
             point_j = solution[agent_j][idx_j]
             if self.dist(point_i, point_j) <= 2*self.robot_radius:
+                if self.debug:
+                    print(f'    COLLISION at time {abs_time}: Agent {agent_i.agent_id} at {point_i} vs Agent {agent_j.agent_id} at {point_j}')
                 return abs_time
         return -1
 
