@@ -220,9 +220,13 @@ class Planner:
     def calculate_path(self, agent: Agent, 
                        constraints: Constraints, 
                        goal_times: Dict[int, Set[Tuple[int, int]]]) -> np.ndarray:
+        # Get constraints for this agent, filtering out times before agent starts
+        agent_constraints = constraints.setdefault(agent, dict())
+        filtered_constraints = {t: positions for t, positions in agent_constraints.items() 
+                                if t >= agent.start_time}
         return self.st_planner.plan(agent.start, 
                                     agent.goal, 
-                                    constraints.setdefault(agent, dict()), 
+                                    filtered_constraints,
                                     semi_dynamic_obstacles=goal_times,
                                     start_time=agent.start_time,
                                     max_iter=self.low_level_max_iter, 
