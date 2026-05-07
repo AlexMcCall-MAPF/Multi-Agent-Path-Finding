@@ -121,20 +121,22 @@ class Planner:
             if agent.agent_id in best.agent_start_times:
                 agent.start_time = best.agent_start_times[agent.agent_id]
         
-        agent_i, agent_j, time_of_conflict = self.validate_paths(self.agents, best)
+        agent_i, agent_j, conflict_info = self.validate_paths(self.agents, best)
 
-        # If there is not conflict, validate_paths returns (None, None, -1)
+        # If there is not conflict, validate_paths returns (None, None, (-1, ''))
         if agent_i is None:
             results.append((self.reformat(self.agents, best.solution),))
             return
         
+        time_of_conflict, conflict_type = conflict_info
+        
         # Debug: Print conflict information
         if self.debug:
-            print(f'CBS: Conflict detected between Agent {agent_i.agent_id} and Agent {agent_j.agent_id} at time {time_of_conflict}')
+            print(f'CBS: {conflict_type.upper()} CONFLICT detected between Agent {agent_i.agent_id} and Agent {agent_j.agent_id} at time {time_of_conflict}')
         
         # Calculate new constraints
-        agent_i_constraint = self.calculate_constraints(best, agent_i, agent_j, time_of_conflict)
-        agent_j_constraint = self.calculate_constraints(best, agent_j, agent_i, time_of_conflict)
+        agent_i_constraint = self.calculate_constraints(best, agent_i, agent_j, time_of_conflict, conflict_type)
+        agent_j_constraint = self.calculate_constraints(best, agent_j, agent_i, time_of_conflict, conflict_type)
 
         # Calculate new paths
         agent_i_path = self.calculate_path(agent_i,
@@ -171,21 +173,22 @@ class Planner:
 
 
     '''
-    Pair of agent, point of conflict
+    Pair of agent, point of conflict, conflict type
     '''
     def validate_paths(self, agents, node: CTNode):
         # Check collision pair-wise
         for agent_i, agent_j in combinations(agents, 2):
-            time_of_conflict = self.safe_distance(node.solution, agent_i, agent_j)
+            time_of_conflict, conflict_type = self.safe_distance(node.solution, agent_i, agent_j)
             # time_of_conflict=-1 if there is not conflict
             if time_of_conflict == -1:
                 continue
-            return agent_i, agent_j, time_of_conflict
-        return None, None, -1
+            return agent_i, agent_j, (time_of_conflict, conflict_type)
+        return None, None, (-1, '')
 
 
-    def safe_distance(self, solution: Dict[Agent, np.ndarray], agent_i: Agent, agent_j: Agent) -> int:
-        # Calculate time ranges where both agents are active
+    def safe_distance(self, solution: Dict[Agent, np.ndarray], agent_i: Agent, agent_j: Agent) -> Tuple[int, str]:
+        # Returns (time_of_conflict, conflict_type) where conflict_type is 'vertex' or 'edge'
+        # Returns (-1, '') if no conflict
         start_i = agent_i.start_time
         start_j = agent_j.start_time
         end_i = start_i + len(solution[agent_i])
@@ -197,11 +200,32 @@ class Planner:
             idx_j = abs_time - start_j
             point_i = solution[agent_i][idx_i]
             point_j = solution[agent_j][idx_j]
+            
+            # Vertex conflict: same position at same time
             if self.dist(point_i, point_j) <= 2*self.robot_radius:
                 if self.debug:
                     print(f'    COLLISION at time {abs_time}: Agent {agent_i.agent_id} at {point_i} vs Agent {agent_j.agent_id} at {point_j}')
-                return abs_time
-        return -1
+                return abs_time, 'vertex'
+        
+        # Check for edge conflicts (head-on collisions)
+        # Edge conflict: Agent i goes A->B, Agent j goes B->A at same time
+        for abs_time in range(max(start_i, start_j) + 1, min(end_i, end_j)):
+            idx_i = abs_time - start_i
+            idx_j = abs_time - start_j
+            
+            # Get positions at current and previous times
+            pos_i_prev = solution[agent_i][idx_i - 1]
+            pos_i_curr = solution[agent_i][idx_i]
+            pos_j_prev = solution[agent_j][idx_j - 1]
+            pos_j_curr = solution[agent_j][idx_j]
+            
+            # Check if agents swapped positions (A->B and B->A)
+            if (np.array_equal(pos_i_prev, pos_j_curr) and np.array_equal(pos_i_curr, pos_j_prev)):
+                if self.debug:
+                    print(f'    EDGE CONFLICT at time {abs_time}: Agent {agent_i.agent_id} {pos_i_prev}->{pos_i_curr} vs Agent {agent_j.agent_id} {pos_j_prev}->{pos_j_curr}')
+                return abs_time, 'edge'
+        
+        return -1, ''
 
     @staticmethod
     def dist(point1: np.ndarray, point2: np.ndarray) -> int:
@@ -210,24 +234,47 @@ class Planner:
     def calculate_constraints(self, node: CTNode,
                                     constrained_agent: Agent,
                                     unchanged_agent: Agent,
-                                    time_of_conflict: int) -> Constraints:
-        contrained_path = node.solution[constrained_agent]
+                                    time_of_conflict: int,
+                                    conflict_type: str = 'vertex') -> Constraints:
+        constrained_path = node.solution[constrained_agent]
         unchanged_path = node.solution[unchanged_agent]
 
         # Convert absolute time to path indices
         idx_conflict_constrained = time_of_conflict - constrained_agent.start_time
         idx_conflict_unchanged = time_of_conflict - unchanged_agent.start_time
         
+        if conflict_type == 'vertex':
+            # Vertex conflict: agent cannot be at this position during this time range
+            pivot = unchanged_path[idx_conflict_unchanged]
+            conflict_end_time = time_of_conflict
+            try:
+                while idx_conflict_constrained < len(constrained_path) and \
+                      self.dist(constrained_path[idx_conflict_constrained], pivot) < 2*self.robot_radius:
+                    conflict_end_time += 1
+                    idx_conflict_constrained += 1
+            except IndexError:
+                pass
+            return node.constraints.fork(constrained_agent, tuple(pivot.tolist()), time_of_conflict, conflict_end_time)
+        
+        elif conflict_type == 'edge':
+            # Edge conflict: agent cannot traverse this edge during this time range
+            # At time_of_conflict, unchanged_agent is at position B
+            # At time_of_conflict-1, unchanged_agent was at position A
+            idx_prev = idx_conflict_unchanged - 1
+            if idx_prev >= 0:
+                from_pos = tuple(unchanged_path[idx_prev].tolist())
+                to_pos = tuple(unchanged_path[idx_conflict_unchanged].tolist())
+                # Constrain the reverse edge (to_pos -> from_pos)
+                conflict_end_time = time_of_conflict + 1
+                return node.constraints.fork_edge(constrained_agent, to_pos, from_pos, time_of_conflict, conflict_end_time)
+            else:
+                # Fallback to vertex constraint if can't extract edge
+                pivot = unchanged_path[idx_conflict_unchanged]
+                return node.constraints.fork(constrained_agent, tuple(pivot.tolist()), time_of_conflict, time_of_conflict + 1)
+        
+        # Default fallback
         pivot = unchanged_path[idx_conflict_unchanged]
-        conflict_end_time = time_of_conflict
-        try:
-            while idx_conflict_constrained < len(contrained_path) and \
-                  self.dist(contrained_path[idx_conflict_constrained], pivot) < 2*self.robot_radius:
-                conflict_end_time += 1
-                idx_conflict_constrained += 1
-        except IndexError:
-            pass
-        return node.constraints.fork(constrained_agent, tuple(pivot.tolist()), time_of_conflict, conflict_end_time)
+        return node.constraints.fork(constrained_agent, tuple(pivot.tolist()), time_of_conflict, time_of_conflict + 1)
 
     def calculate_goal_times(self, node: CTNode, agent: Agent, agents: List[Agent]):
         solution = node.solution
@@ -250,14 +297,20 @@ class Planner:
                        goal_times: Dict[int, Set[Tuple[int, int]]]) -> np.ndarray:
         if self.debug:
             agent_constraints = constraints.agent_constraints.get(agent, {})
+            agent_edge_constraints = constraints.agent_edge_constraints.get(agent, {})
             total_constraints = sum(len(obstacles) for obstacles in agent_constraints.values())
+            total_edge_constraints = sum(len(edges) for edges in agent_edge_constraints.values())
             total_goal_obstacles = sum(len(obstacles) for obstacles in goal_times.values()) if goal_times else 0
-            print(f'[calculate_path] Agent {agent.agent_id}: start={agent.start}, goal={agent.goal}, start_time={agent.start_time}, explicit_constraints={total_constraints}, goal_time_obstacles={total_goal_obstacles}')
+            print(f'[calculate_path] Agent {agent.agent_id}: start={agent.start}, goal={agent.goal}, start_time={agent.start_time}, explicit_constraints={total_constraints}, edge_constraints={total_edge_constraints}, goal_time_obstacles={total_goal_obstacles}')
+        
+        # Prepare edge constraints for ST-A*
+        edge_constraints = constraints.agent_edge_constraints.get(agent, {})
         
         path = self.st_planner.plan(agent.start, 
                                     agent.goal, 
                                     constraints.setdefault(agent, dict()), 
                                     semi_dynamic_obstacles=goal_times,
+                                    edge_constraints=edge_constraints,
                                     start_time=agent.start_time,
                                     max_iter=self.low_level_max_iter, 
                                     debug=self.debug)
